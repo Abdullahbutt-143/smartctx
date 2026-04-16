@@ -1,0 +1,45 @@
+{
+  "name": "smartctx",
+  "version": "0.1.1",
+  "description": "Smart context manager for AI coding assistants — saves millions of tokens by building a local memory of your project",
+  "author": "Abdullah butt <asohailbutt34@gmail.com>",
+  "main": "dist/index.js",
+  "bin": {
+    "smartctx": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "context",
+    "ai",
+    "tokens",
+    "codex",
+    "cursor",
+    "copilot",
+    "developer-tools"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "chalk": "^5.3.0",
+    "chokidar": "^3.6.0",
+    "commander": "^12.0.0",
+    "glob": "^10.3.10",
+    "ignore": "^5.3.1",
+    "ora": "^8.0.1",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
