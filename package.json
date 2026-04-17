@@ -1,8 +1,12 @@
 {
   "name": "smartctx",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Smart context manager for AI coding assistants — saves millions of tokens by building a local memory of your project",
-  "author": "Abdullah Butt <asohailbutt34@gmail.com>",
+  "author": {
+    "name": "Abdullah Butt",
+    "email": "asohailbutt34@gmail.com",
+    "url": "https://github.com/Abdullahbutt-143"
+  },
   "main": "dist/index.js",
   "bin": {
     "smartctx": "dist/index.js"
