@@ -25,6 +25,14 @@ npm install -g smartctx
 
 # pip
 pip install smartctx
+
+# Homebrew (macOS/Linux)
+brew tap Abdullahbutt-143/smartctx
+brew install smartctx
+
+# Scoop (Windows)
+scoop bucket add smartctx https://github.com/Abdullahbutt-143/scoop-smartctx
+scoop install smartctx
 ```
 
 ## Quick Start
