@@ -3,11 +3,17 @@ pyproject.toml
 setup.py
 python/smartctx/__init__.py
 python/smartctx/__main__.py
+python/smartctx/cli.c
 python/smartctx/cli.py
+python/smartctx/generator.c
 python/smartctx/generator.py
+python/smartctx/query.c
 python/smartctx/query.py
+python/smartctx/scanner.c
 python/smartctx/scanner.py
+python/smartctx/storage.c
 python/smartctx/storage.py
+python/smartctx/summarizer.c
 python/smartctx/summarizer.py
 python/smartctx.egg-info/PKG-INFO
 python/smartctx.egg-info/SOURCES.txt
