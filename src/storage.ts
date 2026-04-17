@@ -34,7 +34,7 @@ export interface ProjectIndex {
 
 export interface GlobalConfig {
   apiKey?: string;
-  defaultTarget: "claude" | "cursor" | "copilot" | "codex";
+  defaultTarget: string;
   syncSchedule: "daily" | "weekly" | "manual";
   maxFileSizeKB: number;
   excludePatterns: string[];

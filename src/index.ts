@@ -3,7 +3,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
-import path from "path";
 import {
   loadGlobalConfig,
   saveGlobalConfig,
@@ -15,7 +14,19 @@ import {
 import { scanProject, getChangedFiles } from "./scanner.js";
 import { summarizeFiles, estimateCost } from "./summarizer.js";
 import { queryIndex } from "./query.js";
-import { generateContextFile, estimateTokensSaved, Target } from "./generator.js";
+import {
+  generateContextFiles,
+  estimateTokensSaved,
+} from "./generator.js";
+import {
+  getTarget,
+  parseTargets,
+  detectTarget,
+  addUserTarget,
+  removeUserTarget,
+  BUILT_IN_TARGETS,
+  loadUserTargets,
+} from "./targets.js";
 
 const program = new Command();
 
@@ -41,7 +52,6 @@ program
     const projectPath = process.cwd();
     const config = loadGlobalConfig();
 
-    // Save API key if provided
     if (options.apiKey) {
       saveGlobalConfig({ apiKey: options.apiKey });
       config.apiKey = options.apiKey;
@@ -51,7 +61,7 @@ program
     if (!config.apiKey) {
       console.log(
         chalk.red("✗ No API key found. Run with --api-key sk-ant-xxxxx\n") +
-        chalk.gray("  Or set it once: smartctx config --api-key sk-ant-xxxxx\n")
+          chalk.gray("  Or set it once: smartctx config --api-key sk-ant-xxxxx\n")
       );
       process.exit(1);
     }
@@ -59,18 +69,16 @@ program
     if (isInitialized(projectPath)) {
       console.log(
         chalk.yellow("⚠ Already initialized. Run ") +
-        chalk.white("smartctx sync") +
-        chalk.yellow(" to update.\n")
+          chalk.white("smartctx sync") +
+          chalk.yellow(" to update.\n")
       );
       process.exit(0);
     }
 
-    // Scan
     const scanSpinner = ora("Scanning project files...").start();
     const files = await scanProject(projectPath, config);
     scanSpinner.succeed(`Found ${chalk.bold(files.length)} files to index`);
 
-    // Estimate cost
     const { estimatedCostUSD } = estimateCost(files);
     console.log(
       chalk.gray(
@@ -85,7 +93,6 @@ program
       return;
     }
 
-    // Summarize
     console.log(chalk.cyan("\nSummarizing files with Claude Haiku (cheapest model)...\n"));
     const index = createEmptyIndex(projectPath);
 
@@ -97,7 +104,6 @@ program
 
     console.log("\n");
 
-    // Save to index
     for (const summary of summaries) {
       index.files[summary.path] = summary;
     }
@@ -147,12 +153,10 @@ program
       return;
     }
 
-    // Remove deleted files
     for (const deletedPath of changes.deleted) {
       delete index.files[deletedPath];
     }
 
-    // Re-summarize new/changed files
     if (toProcess.length > 0) {
       console.log(chalk.cyan(`\nSummarizing ${toProcess.length} files...\n`));
       const summaries = await summarizeFiles(toProcess, config.apiKey, (current, total, filePath) => {
@@ -178,7 +182,10 @@ program
 program
   .command("query <task>")
   .description('Find relevant files and generate context — e.g. smartctx query "add auth"')
-  .option("--for <target>", "Target AI tool: claude, cursor, copilot, codex", "claude")
+  .option(
+    "--for <targets>",
+    "Comma-separated AI tools (claude,cursor,copilot,codex,windsurf,cline,aider,continue,gemini,zed, or custom). Auto-detected if omitted."
+  )
   .option("--top <n>", "Number of files to include", "10")
   .action(async (task: string, options) => {
     console.log(chalk.cyan.bold("\n🔍 smartctx query\n"));
@@ -191,10 +198,32 @@ program
     }
 
     const index = loadIndex(projectPath)!;
+    const config = loadGlobalConfig();
     const topK = parseInt(options.top, 10);
-    const target = options.for as Target;
 
-    // Query locally (zero API cost)
+    let targets: string[];
+    if (options.for) {
+      targets = parseTargets(options.for);
+    } else {
+      const detected = detectTarget(projectPath);
+      if (detected) {
+        targets = [detected];
+        console.log(chalk.gray(`  Auto-detected target: ${chalk.white(detected)}\n`));
+      } else {
+        targets = [config.defaultTarget || "codex"];
+        console.log(chalk.gray(`  Using default target: ${chalk.white(targets[0])}\n`));
+      }
+    }
+
+    for (const t of targets) {
+      if (!getTarget(t)) {
+        console.log(
+          chalk.red(`✗ Unknown target "${t}". Run: smartctx targets list\n`)
+        );
+        process.exit(1);
+      }
+    }
+
     const results = queryIndex(index, task, topK);
 
     if (results.length === 0) {
@@ -210,15 +239,17 @@ program
       console.log(chalk.gray(`     ${r.file.summary}`));
     });
 
-    // Generate context file
-    const outputPath = generateContextFile(index, results, task, target, projectPath);
+    const generated = generateContextFiles(index, results, task, targets, projectPath);
 
-    // Estimate savings
-    const avgSize = Object.values(index.files).reduce((sum, f) => sum + f.size, 0) / index.totalFiles;
+    const avgSize =
+      Object.values(index.files).reduce((sum, f) => sum + f.size, 0) / index.totalFiles;
     const saved = estimateTokensSaved(index.totalFiles, avgSize, results.length);
 
-    console.log(`\n${chalk.green.bold("✓ Context file generated:")} ${chalk.white(outputPath)}`);
-    console.log(chalk.gray(`  ~${saved.toLocaleString()} tokens saved vs reading full project\n`));
+    console.log(`\n${chalk.green.bold("✓ Context files generated:")}`);
+    for (const g of generated) {
+      console.log(`  ${chalk.white(g.outputPath)} ${chalk.gray(`(${g.target})`)}`);
+    }
+    console.log(chalk.gray(`\n  ~${saved.toLocaleString()} tokens saved vs reading full project\n`));
   });
 
 // ─── STATUS ───────────────────────────────────────────────────────────────────
@@ -252,13 +283,21 @@ program
   .command("config")
   .description("Set global configuration")
   .option("--api-key <key>", "Set your Anthropic API key")
-  .option("--target <target>", "Default target: claude, cursor, copilot, codex")
+  .option("--target <target>", "Default target (any registered target name)")
   .option("--schedule <schedule>", "Sync schedule: daily, weekly, manual")
   .action((options) => {
     const updates: Record<string, string> = {};
 
     if (options.apiKey) updates.apiKey = options.apiKey;
-    if (options.target) updates.defaultTarget = options.target;
+    if (options.target) {
+      if (!getTarget(options.target)) {
+        console.log(
+          chalk.red(`\n✗ Unknown target "${options.target}". Run: smartctx targets list\n`)
+        );
+        process.exit(1);
+      }
+      updates.defaultTarget = options.target;
+    }
     if (options.schedule) updates.syncSchedule = options.schedule;
 
     if (Object.keys(updates).length === 0) {
@@ -276,6 +315,97 @@ program
       console.log(chalk.gray(`  ${k}: ${display}`));
     });
     console.log();
+  });
+
+// ─── TARGETS ──────────────────────────────────────────────────────────────────
+
+const targetsCmd = program
+  .command("targets")
+  .description("Manage AI tool targets (list, add, remove custom targets)");
+
+targetsCmd
+  .command("list")
+  .description("List all available targets (built-in + user-defined)")
+  .action(() => {
+    console.log(chalk.cyan.bold("\n🎯 smartctx targets\n"));
+
+    const builtIn = Object.values(BUILT_IN_TARGETS);
+    const user = Object.values(loadUserTargets());
+
+    console.log(chalk.white.bold("Built-in:"));
+    for (const t of builtIn) {
+      console.log(
+        `  ${chalk.green(t.name.padEnd(12))} → ${chalk.gray(t.outputFile)}`
+      );
+    }
+
+    if (user.length > 0) {
+      console.log(chalk.white.bold("\nUser-defined:"));
+      for (const t of user) {
+        console.log(
+          `  ${chalk.magenta(t.name.padEnd(12))} → ${chalk.gray(t.outputFile)}`
+        );
+      }
+    }
+    console.log();
+  });
+
+targetsCmd
+  .command("add")
+  .description("Register a custom target")
+  .requiredOption("--name <name>", "Target name (e.g. myagent)")
+  .requiredOption("--file <path>", "Output file path (e.g. MYAGENT.md)")
+  .option("--header <text>", "Header comment for the output file")
+  .option(
+    "--detect <files>",
+    "Comma-separated marker files for auto-detection"
+  )
+  .action((options) => {
+    const name = String(options.name).toLowerCase();
+    if (name in BUILT_IN_TARGETS) {
+      console.log(
+        chalk.yellow(`\n⚠ "${name}" is a built-in target — your definition will override it.\n`)
+      );
+    }
+    addUserTarget({
+      name,
+      outputFile: options.file,
+      header: options.header || `# ${name} — auto-generated by smartctx`,
+      detectFiles: options.detect
+        ? String(options.detect).split(",").map((s) => s.trim()).filter(Boolean)
+        : undefined,
+    });
+    console.log(chalk.green(`\n✓ Target "${name}" added.\n`));
+    console.log(chalk.gray(`  Use: smartctx query "..." --for ${name}\n`));
+  });
+
+targetsCmd
+  .command("remove <name>")
+  .description("Remove a user-defined target")
+  .action((name: string) => {
+    const ok = removeUserTarget(name);
+    if (ok) {
+      console.log(chalk.green(`\n✓ Target "${name}" removed.\n`));
+    } else {
+      console.log(
+        chalk.yellow(`\n⚠ "${name}" is not a user-defined target (built-ins can't be removed).\n`)
+      );
+    }
+  });
+
+targetsCmd
+  .command("detect")
+  .description("Show which target would be auto-detected for this project")
+  .action(() => {
+    const detected = detectTarget(process.cwd());
+    if (detected) {
+      const def = getTarget(detected)!;
+      console.log(chalk.green(`\n✓ Detected: ${chalk.white(detected)} → ${chalk.gray(def.outputFile)}\n`));
+    } else {
+      console.log(
+        chalk.gray("\nNo marker files found. Would fall back to default target.\n")
+      );
+    }
   });
 
 // ─── Run ──────────────────────────────────────────────────────────────────────
