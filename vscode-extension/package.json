@@ -1,0 +1,86 @@
+{
+  "name": "smartctx-vscode",
+  "displayName": "smartctx",
+  "description": "Smart context manager for AI coding assistants — build a lean CLAUDE.md / .cursorrules from your workspace.",
+  "version": "0.1.0",
+  "publisher": "AbdullahButt143",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other", "AI"],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "smartctx",
+          "title": "smartctx",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "smartctx": [
+        {
+          "id": "smartctx.sidebar",
+          "name": "smartctx",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "smartctx.init",
+        "title": "smartctx: Initialize project"
+      },
+      {
+        "command": "smartctx.sync",
+        "title": "smartctx: Sync changed files"
+      },
+      {
+        "command": "smartctx.query",
+        "title": "smartctx: Query for task"
+      },
+      {
+        "command": "smartctx.setApiKey",
+        "title": "smartctx: Set Anthropic API key"
+      }
+    ],
+    "configuration": {
+      "title": "smartctx",
+      "properties": {
+        "smartctx.defaultTarget": {
+          "type": "string",
+          "enum": ["claude", "cursor", "copilot", "codex"],
+          "default": "claude",
+          "description": "Default AI tool target for generated context files."
+        },
+        "smartctx.topK": {
+          "type": "number",
+          "default": 10,
+          "description": "Number of relevant files to include in generated context."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "compile": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "chokidar": "^3.6.0",
+    "dotenv": "^16.4.5",
+    "glob": "^10.3.10",
+    "ignore": "^5.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.3"
+  }
+}
