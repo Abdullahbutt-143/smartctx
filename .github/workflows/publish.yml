@@ -1,0 +1,111 @@
+name: Build & Publish Protected Packages
+
+on:
+  push:
+    tags:
+      - "v*" # Trigger on version tags like v0.1.3
+
+jobs:
+  # ── npm: obfuscated JS ───────────────────────────────────────────────────
+  publish-npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm run build:protected
+
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── PyPI: Cython-compiled binary wheels ──────────────────────────────────
+  build-wheels:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build dependencies
+        run: pip install setuptools wheel cython build
+
+      - name: Build binary wheel
+        run: python -m build --wheel --outdir dist-python/
+
+      - name: Remove .py source from wheel (keep only compiled .pyd/.so)
+        shell: python
+        run: |
+          import zipfile, os, shutil, glob
+
+          wheel_files = glob.glob("dist-python/*.whl")
+          if not wheel_files:
+              print("No wheel found!")
+              exit(1)
+
+          wheel = wheel_files[0]
+          tmp = wheel + ".tmp"
+
+          # Files to keep as .py (tiny stubs only)
+          KEEP_PY = {"__init__.py", "__main__.py"}
+
+          with zipfile.ZipFile(wheel, "r") as zin:
+              with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+                  for item in zin.infolist():
+                      name = item.filename
+                      basename = os.path.basename(name)
+
+                      # Skip .py source files for compiled modules
+                      if (name.startswith("smartctx/")
+                          and basename.endswith(".py")
+                          and basename not in KEEP_PY):
+                          print(f"  Stripped: {name}")
+                          continue
+
+                      zout.writestr(item, zin.read(item.filename))
+
+          os.replace(tmp, wheel)
+          print(f"Cleaned: {wheel}")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: dist-python/*.whl
+
+  publish-pypi:
+    needs: build-wheels
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: all-wheels/
+          pattern: wheel-*
+          merge-multiple: true
+
+      - name: List wheels
+        run: ls -la all-wheels/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install twine
+
+      - name: Upload to PyPI
+        run: twine upload all-wheels/*.whl
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}

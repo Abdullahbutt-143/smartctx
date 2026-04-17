@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: smartctx
-Version: 0.1.2
+Version: 0.1.3
 Summary: Smart context manager for AI coding assistants — saves millions of tokens by building a local memory of your project
 Author-email: Abdullah Butt <asohailbutt34@gmail.com>
 License-Expression: MIT

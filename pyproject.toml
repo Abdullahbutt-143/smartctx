@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "smartctx"
-version = "0.1.2"
+version = "0.1.3"
 description = "Smart context manager for AI coding assistants — saves millions of tokens by building a local memory of your project"
 readme = "README.md"
 license = "MIT"
