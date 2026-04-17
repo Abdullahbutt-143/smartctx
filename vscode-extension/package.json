@@ -2,7 +2,7 @@
   "name": "smartctx-vscode",
   "displayName": "smartctx",
   "description": "Smart context manager for AI coding assistants — build a lean CLAUDE.md / .cursorrules from your workspace.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "AbdullahButt143",
   "engines": {
     "vscode": "^1.85.0"
@@ -52,9 +52,20 @@
       "properties": {
         "smartctx.defaultTarget": {
           "type": "string",
-          "enum": ["claude", "cursor", "copilot", "codex"],
-          "default": "claude",
-          "description": "Default AI tool target for generated context files."
+          "enum": [
+            "claude",
+            "cursor",
+            "copilot",
+            "codex",
+            "windsurf",
+            "cline",
+            "aider",
+            "continue",
+            "gemini",
+            "zed"
+          ],
+          "default": "codex",
+          "description": "Default AI tool target for generated context files. Custom targets defined via ~/.smartctx/targets.json also work."
         },
         "smartctx.topK": {
           "type": "number",

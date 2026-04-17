@@ -18,10 +18,23 @@ from smartctx.storage import (
 from smartctx.scanner import scan_project, get_changed_files
 from smartctx.summarizer import summarize_files, estimate_cost
 from smartctx.query import query_index
-from smartctx.generator import generate_context_file, estimate_tokens_saved, Target
+from smartctx.generator import (
+    generate_context_files,
+    estimate_tokens_saved,
+)
+from smartctx.targets import (
+    BUILT_IN_TARGETS,
+    add_user_target,
+    detect_target,
+    get_target,
+    load_user_targets,
+    parse_targets,
+    remove_user_target,
+    TargetDef,
+)
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# -- Helpers --------------------------------------------------------------
 
 def _green(text: str) -> str:
     return click.style(text, fg="green")
@@ -39,6 +52,10 @@ def _yellow(text: str) -> str:
     return click.style(text, fg="yellow")
 
 
+def _magenta(text: str) -> str:
+    return click.style(text, fg="magenta")
+
+
 def _dim(text: str) -> str:
     return click.style(text, dim=True)
 
@@ -47,7 +64,7 @@ def _bold(text: str) -> str:
     return click.style(text, bold=True)
 
 
-# ── CLI ──────────────────────────────────────────────────────────────────────
+# -- CLI ------------------------------------------------------------------
 
 @click.group()
 @click.version_option(package_name="smartctx")
@@ -55,7 +72,7 @@ def main():
     """Smart context manager for AI coding assistants -- saves tokens, builds local memory."""
 
 
-# ── INIT ─────────────────────────────────────────────────────────────────────
+# -- INIT -----------------------------------------------------------------
 
 @main.command()
 @click.option("--api-key", default=None, help="Your Anthropic API key (saved globally)")
@@ -67,7 +84,6 @@ def init(api_key: str | None, dry_run: bool):
     project_path = os.getcwd()
     config = load_global_config()
 
-    # Save API key if provided
     if api_key:
         save_global_config({"apiKey": api_key})
         config.apiKey = api_key
@@ -88,12 +104,10 @@ def init(api_key: str | None, dry_run: bool):
         )
         sys.exit(0)
 
-    # Scan
     click.echo("Scanning project files...")
     files = scan_project(project_path, config)
     click.echo(_green(f"\u2713 Found {_bold(str(len(files)))} files to index"))
 
-    # Estimate cost
     cost_info = estimate_cost(files)
     click.echo(
         _dim(f"  Estimated one-time cost: ~${cost_info['estimatedCostUSD']:.4f} (using Claude Haiku)\n")
@@ -106,7 +120,6 @@ def init(api_key: str | None, dry_run: bool):
         click.echo(_cyan("\n[Dry run -- no API calls made]"))
         return
 
-    # Summarize
     click.echo(_cyan("\nSummarizing files with Claude Haiku (cheapest model)...\n"))
     index = create_empty_index(project_path)
 
@@ -117,7 +130,6 @@ def init(api_key: str | None, dry_run: bool):
     summaries = summarize_files(files, config.apiKey, on_progress)
     click.echo("\n")
 
-    # Save to index
     for s in summaries:
         index.files[s.path] = s
     index.totalFiles = len(summaries)
@@ -129,7 +141,7 @@ def init(api_key: str | None, dry_run: bool):
     click.echo(_dim('  Run: smartctx query "your task description"\n'))
 
 
-# ── SYNC ─────────────────────────────────────────────────────────────────────
+# -- SYNC -----------------------------------------------------------------
 
 @main.command()
 def sync():
@@ -164,11 +176,9 @@ def sync():
         click.echo(_green("\n\u2713 Everything up to date!\n"))
         return
 
-    # Remove deleted files
     for deleted_path in changes["deleted"]:
         index.files.pop(deleted_path, None)
 
-    # Re-summarize new/changed files
     if to_process:
         click.echo(_cyan(f"\nSummarizing {len(to_process)} files...\n"))
 
@@ -188,14 +198,17 @@ def sync():
     click.echo(_green(_bold("\u2713 Sync complete!\n")))
 
 
-# ── QUERY ────────────────────────────────────────────────────────────────────
+# -- QUERY ----------------------------------------------------------------
 
 @main.command()
 @click.argument("task")
-@click.option("--for", "target", default="claude", type=click.Choice(["claude", "cursor", "copilot", "codex"]),
-              help="Target AI tool")
+@click.option(
+    "--for", "target",
+    default=None,
+    help="Comma-separated AI tools (claude,cursor,copilot,codex,windsurf,cline,aider,continue,gemini,zed, or custom). Auto-detected if omitted.",
+)
 @click.option("--top", default=10, type=int, help="Number of files to include")
-def query(task: str, target: str, top: int):
+def query(task: str, target: str | None, top: int):
     """Find relevant files and generate context -- e.g. smartctx query "add auth"."""
     click.echo(_cyan(_bold("\n\U0001f50d smartctx query\n")))
 
@@ -204,6 +217,24 @@ def query(task: str, target: str, top: int):
     if not is_initialized(project_path):
         click.echo(_red("\u2717 Not initialized. Run: smartctx init\n"))
         sys.exit(1)
+
+    config = load_global_config()
+
+    if target:
+        targets = parse_targets(target)
+    else:
+        detected = detect_target(project_path)
+        if detected:
+            targets = [detected]
+            click.echo(_dim(f"  Auto-detected target: {detected}\n"))
+        else:
+            targets = [config.defaultTarget or "codex"]
+            click.echo(_dim(f"  Using default target: {targets[0]}\n"))
+
+    for t in targets:
+        if get_target(t) is None:
+            click.echo(_red(f'\u2717 Unknown target "{t}". Run: smartctx targets list\n'))
+            sys.exit(1)
 
     index = load_index(project_path)
     results = query_index(index, task, top)
@@ -217,20 +248,20 @@ def query(task: str, target: str, top: int):
         click.echo(f"  {_bold(f'{i + 1}.')} {_cyan(r.file.path)} {_dim(f'(score: {r.score:.1f})')}")
         click.echo(_dim(f"     {r.file.summary}"))
 
-    # Generate context file
-    output_path = generate_context_file(index, results, task, target, project_path)
+    generated = generate_context_files(index, results, task, targets, project_path)
 
-    # Estimate savings
     total_size = sum(f.size for f in index.files.values())
     avg_size = total_size / index.totalFiles if index.totalFiles else 0
     saved = estimate_tokens_saved(index.totalFiles, avg_size, len(results))
 
-    check = "\u2713 Context file generated:"
-    click.echo(f"\n{_green(_bold(check))} {output_path}")
-    click.echo(_dim(f"  ~{saved:,} tokens saved vs reading full project\n"))
+    header_line = _green(_bold("\u2713 Context files generated:"))
+    click.echo("\n" + header_line)
+    for g in generated:
+        click.echo(f"  {g.outputPath} {_dim(f'({g.target})')}")
+    click.echo(_dim(f"\n  ~{saved:,} tokens saved vs reading full project\n"))
 
 
-# ── STATUS ───────────────────────────────────────────────────────────────────
+# -- STATUS ---------------------------------------------------------------
 
 @main.command()
 def status():
@@ -254,12 +285,11 @@ def status():
     click.echo(f"  Schedule:   {config.syncSchedule}\n")
 
 
-# ── CONFIG ───────────────────────────────────────────────────────────────────
+# -- CONFIG ---------------------------------------------------------------
 
 @main.command()
 @click.option("--api-key", default=None, help="Set your Anthropic API key")
-@click.option("--target", default=None, type=click.Choice(["claude", "cursor", "copilot", "codex"]),
-              help="Default target")
+@click.option("--target", default=None, help="Default target (any registered target name)")
 @click.option("--schedule", default=None, type=click.Choice(["daily", "weekly", "manual"]),
               help="Sync schedule")
 def config(api_key: str | None, target: str | None, schedule: str | None):
@@ -269,6 +299,9 @@ def config(api_key: str | None, target: str | None, schedule: str | None):
     if api_key:
         updates["apiKey"] = api_key
     if target:
+        if get_target(target) is None:
+            click.echo(_red(f'\n\u2717 Unknown target "{target}". Run: smartctx targets list\n'))
+            sys.exit(1)
         updates["defaultTarget"] = target
     if schedule:
         updates["syncSchedule"] = schedule
@@ -292,3 +325,73 @@ def config(api_key: str | None, target: str | None, schedule: str | None):
         display_val = v[:10] + "..." if k == "apiKey" else v
         click.echo(_dim(f"  {k}: {display_val}"))
     click.echo()
+
+
+# -- TARGETS --------------------------------------------------------------
+
+@main.group()
+def targets():
+    """Manage AI tool targets (list, add, remove custom targets)."""
+
+
+@targets.command("list")
+def targets_list():
+    """List all available targets (built-in + user-defined)."""
+    click.echo(_cyan(_bold("\n\U0001f3af smartctx targets\n")))
+
+    click.echo(_bold("Built-in:"))
+    for t in BUILT_IN_TARGETS.values():
+        click.echo(f"  {_green(t.name.ljust(12))} -> {_dim(t.outputFile)}")
+
+    user = list(load_user_targets().values())
+    if user:
+        click.echo(_bold("\nUser-defined:"))
+        for t in user:
+            click.echo(f"  {_magenta(t.name.ljust(12))} -> {_dim(t.outputFile)}")
+    click.echo()
+
+
+@targets.command("add")
+@click.option("--name", required=True, help="Target name (e.g. myagent)")
+@click.option("--file", "file_", required=True, help="Output file path (e.g. MYAGENT.md)")
+@click.option("--header", default=None, help="Header comment for the output file")
+@click.option("--detect", default=None, help="Comma-separated marker files for auto-detection")
+def targets_add(name: str, file_: str, header: str | None, detect: str | None):
+    """Register a custom target."""
+    key = name.lower()
+    if key in BUILT_IN_TARGETS:
+        click.echo(_yellow(f'\n\u26a0 "{key}" is a built-in target -- your definition will override it.\n'))
+    detect_list = (
+        [s.strip() for s in detect.split(",") if s.strip()] if detect else []
+    )
+    add_user_target(
+        TargetDef(
+            name=key,
+            outputFile=file_,
+            header=header or f"# {key} -- auto-generated by smartctx",
+            detectFiles=detect_list,
+        )
+    )
+    click.echo(_green(f'\n\u2713 Target "{key}" added.\n'))
+    click.echo(_dim(f'  Use: smartctx query "..." --for {key}\n'))
+
+
+@targets.command("remove")
+@click.argument("name")
+def targets_remove(name: str):
+    """Remove a user-defined target."""
+    if remove_user_target(name):
+        click.echo(_green(f'\n\u2713 Target "{name}" removed.\n'))
+    else:
+        click.echo(_yellow(f'\n\u26a0 "{name}" is not a user-defined target (built-ins cannot be removed).\n'))
+
+
+@targets.command("detect")
+def targets_detect():
+    """Show which target would be auto-detected for this project."""
+    detected = detect_target(os.getcwd())
+    if detected:
+        definition = get_target(detected)
+        click.echo(_green(f"\n\u2713 Detected: {detected} -> {_dim(definition.outputFile)}\n"))
+    else:
+        click.echo(_dim("\nNo marker files found. Would fall back to default target.\n"))

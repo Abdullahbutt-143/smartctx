@@ -37,7 +37,7 @@ program
   .description(
     "Smart context manager for AI coding assistants — saves tokens, builds local memory"
   )
-  .version("0.1.0");
+  .version("0.2.0");
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 

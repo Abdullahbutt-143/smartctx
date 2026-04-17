@@ -16,6 +16,7 @@ MODULES_TO_COMPILE = [
     "summarizer",
     "query",
     "generator",
+    "targets",
 ]
 
 
