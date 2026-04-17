@@ -3,3 +3,17 @@ dist/
 .env
 .smartctx/
 *.js.map
+
+# Python build artifacts
+dist-python/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+
+# VS Code extension build
+vscode-extension/dist/
+vscode-extension/*.vsix
+
+# Claude Code local overrides
+.claude/settings.local.json
