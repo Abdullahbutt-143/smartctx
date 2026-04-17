@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smartctx"
+version = "0.1.2"
+description = "Smart context manager for AI coding assistants — saves millions of tokens by building a local memory of your project"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Abdullah Butt", email = "asohailbutt34@gmail.com" },
+]
+keywords = [
+    "claude", "claude-code", "context", "ai", "tokens",
+    "codex", "cursor", "copilot", "developer-tools", "smartctx",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development",
+]
+dependencies = [
+    "anthropic>=0.30.0",
+    "click>=8.0.0",
+    "pathspec>=0.11.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://www.npmjs.com/package/smartctx"
+Repository = "https://github.com/Abdullahbutt-143/smartctx"
+
+[project.scripts]
+smartctx = "smartctx.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["python"]

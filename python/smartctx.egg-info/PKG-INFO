@@ -1,3 +1,29 @@
+Metadata-Version: 2.4
+Name: smartctx
+Version: 0.1.2
+Summary: Smart context manager for AI coding assistants — saves millions of tokens by building a local memory of your project
+Author-email: Abdullah Butt <asohailbutt34@gmail.com>
+License-Expression: MIT
+Project-URL: Homepage, https://www.npmjs.com/package/smartctx
+Project-URL: Repository, https://github.com/Abdullahbutt-143/smartctx
+Keywords: claude,claude-code,context,ai,tokens,codex,cursor,copilot,developer-tools,smartctx
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Topic :: Software Development
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: anthropic>=0.30.0
+Requires-Dist: click>=8.0.0
+Requires-Dist: pathspec>=0.11.0
+Requires-Dist: python-dotenv>=1.0.0
+
 # smartctx 🧠
 
 > Save millions of tokens per day by giving AI coding assistants smart, curated context instead of your whole codebase.

@@ -1,8 +1,8 @@
 {
   "name": "smartctx",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Smart context manager for AI coding assistants — saves millions of tokens by building a local memory of your project",
-  "author": "Abdullah butt <asohailbutt34@gmail.com>",
+  "author": "Abdullah Butt <asohailbutt34@gmail.com>",
   "main": "dist/index.js",
   "bin": {
     "smartctx": "dist/index.js"
@@ -21,9 +21,19 @@
     "codex",
     "cursor",
     "copilot",
-    "developer-tools"
+    "developer-tools",
+    "smartctx"
   ],
   "license": "MIT",
+  "homepage": "https://www.npmjs.com/package/smartctx",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Abdullahbutt-143/smartctx"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "chalk": "^5.3.0",

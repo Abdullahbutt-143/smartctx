@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(pip install *)",
+      "Bash(smartctx --version)",
+      "Bash(smartctx --help)",
+      "Bash(python -m smartctx --help)",
+      "Bash(smartctx init *)",
+      "Bash(smartctx query *)",
+      "Bash(python -m pip install build)",
+      "Bash(python -m build)",
+      "Bash(ls c:/Users/pc/Downloads/smartctx/smartctx/dist/*.whl c:/Users/pc/Downloads/smartctx/smartctx/dist/*.tar.gz)",
+      "Bash(python -m build --outdir dist-python)"
+    ]
+  }
+}
