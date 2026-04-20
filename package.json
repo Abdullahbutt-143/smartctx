@@ -1,6 +1,6 @@
 {
   "name": "smartctx",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Smart context manager for AI coding assistants — saves millions of tokens by building a local memory of your project",
   "author": {
     "name": "Abdullah Butt",

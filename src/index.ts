@@ -37,7 +37,7 @@ program
   .description(
     "Smart context manager for AI coding assistants — saves tokens, builds local memory"
   )
-  .version("0.2.0");
+  .version("0.3.0");
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 
@@ -406,6 +406,198 @@ targetsCmd
         chalk.gray("\nNo marker files found. Would fall back to default target.\n")
       );
     }
+  });
+
+// ─── AUTO (silent init + sync + query for AI tool hooks) ─────────────────────
+
+program
+  .command("auto [task]")
+  .description(
+    "Silent mode for AI tool hooks — auto-inits, auto-syncs, and rewrites context. Reads task from arg or JSON stdin."
+  )
+  .option("--verbose", "Print progress (default: silent)")
+  .option("--top <n>", "Number of files to include", "10")
+  .option(
+    "--for <targets>",
+    "Comma-separated AI tools. Auto-detected if omitted."
+  )
+  .option("--max-stale <seconds>", "Skip sync if last sync was within N seconds", "300")
+  .action(async (taskArg: string | undefined, options) => {
+    const log = options.verbose
+      ? (...args: unknown[]) => console.error(...args)
+      : () => {};
+
+    try {
+      const task = taskArg || (await readStdinPrompt());
+      if (!task || !task.trim()) {
+        log(chalk.gray("smartctx auto: no task provided, skipping"));
+        process.exit(0);
+      }
+
+      const projectPath = process.cwd();
+      const config = loadGlobalConfig();
+
+      if (!config.apiKey) {
+        log(chalk.gray("smartctx auto: no API key, skipping silently"));
+        process.exit(0);
+      }
+
+      if (!isInitialized(projectPath)) {
+        log(chalk.cyan("smartctx auto: first run, initializing..."));
+        const files = await scanProject(projectPath, config);
+        const index = createEmptyIndex(projectPath);
+        const summaries = await summarizeFiles(files, config.apiKey);
+        for (const s of summaries) index.files[s.path] = s;
+        index.totalFiles = summaries.length;
+        index.lastSync = new Date().toISOString();
+        saveIndex(index, projectPath);
+        log(chalk.green(`smartctx auto: indexed ${summaries.length} files`));
+      } else {
+        const index = loadIndex(projectPath)!;
+        const maxStale = parseInt(options.maxStale, 10) * 1000;
+        const age = Date.now() - new Date(index.lastSync).getTime();
+        if (age > maxStale) {
+          log(chalk.cyan("smartctx auto: syncing changed files..."));
+          const allFiles = await scanProject(projectPath, config);
+          const changes = getChangedFiles(allFiles, index.files);
+          const toProcess = [...changes.new, ...changes.changed];
+          for (const d of changes.deleted) delete index.files[d];
+          if (toProcess.length > 0) {
+            const summaries = await summarizeFiles(toProcess, config.apiKey);
+            for (const s of summaries) index.files[s.path] = s;
+          }
+          index.totalFiles = Object.keys(index.files).length;
+          index.lastSync = new Date().toISOString();
+          saveIndex(index, projectPath);
+          log(chalk.green(`smartctx auto: synced (${toProcess.length} updated, ${changes.deleted.length} removed)`));
+        }
+      }
+
+      const index = loadIndex(projectPath)!;
+      const topK = parseInt(options.top, 10);
+
+      let targets: string[];
+      if (options.for) {
+        targets = parseTargets(options.for);
+      } else {
+        const detected = detectTarget(projectPath);
+        targets = detected ? [detected] : [config.defaultTarget || "claude"];
+      }
+
+      const results = queryIndex(index, task, topK);
+      if (results.length === 0) {
+        log(chalk.gray("smartctx auto: no relevant files found"));
+        process.exit(0);
+      }
+
+      const generated = generateContextFiles(index, results, task, targets, projectPath);
+      log(
+        chalk.green(
+          `smartctx auto: wrote ${generated.map((g) => g.outputPath).join(", ")}`
+        )
+      );
+      process.exit(0);
+    } catch (err) {
+      // Never block the host AI tool — fail silently (log to stderr if verbose)
+      log(chalk.red(`smartctx auto: ${(err as Error).message}`));
+      process.exit(0);
+    }
+  });
+
+async function readStdinPrompt(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  const raw = Buffer.concat(chunks).toString("utf-8").trim();
+  if (!raw) return "";
+  try {
+    const j = JSON.parse(raw);
+    return j.prompt || j.user_prompt || j.task || j.query || "";
+  } catch {
+    return raw;
+  }
+}
+
+// ─── INSTALL (wire smartctx auto into AI tool hooks) ──────────────────────────
+
+program
+  .command("install")
+  .description(
+    "Install smartctx into an AI tool so context auto-updates on every prompt"
+  )
+  .option(
+    "--tool <tool>",
+    "AI tool to integrate with: claude (default)",
+    "claude"
+  )
+  .option("--scope <scope>", "Install scope: project or user", "project")
+  .option("--uninstall", "Remove the hook instead of adding it")
+  .action(async (options) => {
+    console.log(chalk.cyan.bold("\n🔌 smartctx install\n"));
+    const tool = String(options.tool).toLowerCase();
+    if (tool !== "claude") {
+      console.log(
+        chalk.red(`✗ Tool "${tool}" not supported yet. Only --tool claude works.\n`) +
+          chalk.gray("  For Cursor/Codex, run `smartctx query \"...\"` manually (see README).\n")
+      );
+      process.exit(1);
+    }
+
+    const fs = await import("fs");
+    const os = await import("os");
+    const path = await import("path");
+
+    const settingsPath =
+      options.scope === "user"
+        ? path.join(os.homedir(), ".claude", "settings.json")
+        : path.join(process.cwd(), ".claude", "settings.json");
+
+    const dir = path.dirname(settingsPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    let settings: Record<string, any> = {};
+    if (fs.existsSync(settingsPath)) {
+      try {
+        settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      } catch {
+        console.log(chalk.red(`✗ Could not parse ${settingsPath} — fix it first.\n`));
+        process.exit(1);
+      }
+    }
+
+    settings.hooks = settings.hooks || {};
+    const existing: any[] = settings.hooks.UserPromptSubmit || [];
+    const withoutOurs = existing.filter(
+      (h: any) =>
+        !(h?.hooks || []).some((x: any) =>
+          typeof x?.command === "string" && x.command.includes("smartctx auto")
+        )
+    );
+
+    if (options.uninstall) {
+      settings.hooks.UserPromptSubmit = withoutOurs;
+      if (settings.hooks.UserPromptSubmit.length === 0) delete settings.hooks.UserPromptSubmit;
+      if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      console.log(chalk.green(`✓ Removed smartctx hook from ${settingsPath}\n`));
+      return;
+    }
+
+    settings.hooks.UserPromptSubmit = [
+      ...withoutOurs,
+      {
+        hooks: [{ type: "command", command: "smartctx auto" }],
+      },
+    ];
+
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    console.log(chalk.green(`✓ Installed smartctx UserPromptSubmit hook`));
+    console.log(chalk.gray(`  ${settingsPath}\n`));
+    console.log(chalk.white("What happens now:"));
+    console.log(chalk.gray("  • Every prompt you send in Claude Code triggers `smartctx auto`"));
+    console.log(chalk.gray("  • It silently (re)builds context and rewrites CLAUDE.md"));
+    console.log(chalk.gray("  • Claude Code reads the fresh CLAUDE.md on the next turn"));
+    console.log(chalk.gray("  • To remove: smartctx install --uninstall\n"));
   });
 
 // ─── Run ──────────────────────────────────────────────────────────────────────
