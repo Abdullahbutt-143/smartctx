@@ -1,3 +1,3 @@
 """smartctx — Smart context manager for AI coding assistants."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

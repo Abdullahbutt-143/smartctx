@@ -395,3 +395,170 @@ def targets_detect():
         click.echo(_green(f"\n\u2713 Detected: {detected} -> {_dim(definition.outputFile)}\n"))
     else:
         click.echo(_dim("\nNo marker files found. Would fall back to default target.\n"))
+
+
+# -- AUTO (silent init + sync + query for AI tool hooks) -----------------
+
+def _read_stdin_prompt() -> str:
+    if sys.stdin.isatty():
+        return ""
+    raw = sys.stdin.read().strip()
+    if not raw:
+        return ""
+    try:
+        j = json.loads(raw)
+        return j.get("prompt") or j.get("user_prompt") or j.get("task") or j.get("query") or ""
+    except (json.JSONDecodeError, AttributeError):
+        return raw
+
+
+@main.command()
+@click.argument("task", required=False)
+@click.option("--verbose", is_flag=True, help="Print progress (default: silent)")
+@click.option("--top", default=10, type=int, help="Number of files to include")
+@click.option("--for", "target", default=None, help="Comma-separated AI tools. Auto-detected if omitted.")
+@click.option("--max-stale", default=300, type=int, help="Skip sync if last sync was within N seconds")
+def auto(task: str | None, verbose: bool, top: int, target: str | None, max_stale: int):
+    """Silent mode for AI tool hooks -- auto-inits, auto-syncs, rewrites context."""
+    def log(msg: str):
+        if verbose:
+            click.echo(msg, err=True)
+
+    try:
+        final_task = task or _read_stdin_prompt()
+        if not final_task or not final_task.strip():
+            log(_dim("smartctx auto: no task provided, skipping"))
+            sys.exit(0)
+
+        project_path = os.getcwd()
+        config = load_global_config()
+
+        if not config.apiKey:
+            log(_dim("smartctx auto: no API key, skipping silently"))
+            sys.exit(0)
+
+        if not is_initialized(project_path):
+            log(_cyan("smartctx auto: first run, initializing..."))
+            files = scan_project(project_path, config)
+            index = create_empty_index(project_path)
+            summaries = summarize_files(files, config.apiKey)
+            for s in summaries:
+                index.files[s.path] = s
+            index.totalFiles = len(summaries)
+            index.lastSync = datetime.now(timezone.utc).isoformat()
+            save_index(index, project_path)
+            log(_green(f"smartctx auto: indexed {len(summaries)} files"))
+        else:
+            index = load_index(project_path)
+            try:
+                last = datetime.fromisoformat(index.lastSync.replace("Z", "+00:00"))
+                age = (datetime.now(timezone.utc) - last).total_seconds()
+            except Exception:
+                age = max_stale + 1
+            if age > max_stale:
+                log(_cyan("smartctx auto: syncing changed files..."))
+                all_files = scan_project(project_path, config)
+                changes = get_changed_files(all_files, index.files)
+                to_process = changes["new"] + changes["changed"]
+                for d in changes["deleted"]:
+                    index.files.pop(d, None)
+                if to_process:
+                    summaries = summarize_files(to_process, config.apiKey)
+                    for s in summaries:
+                        index.files[s.path] = s
+                index.totalFiles = len(index.files)
+                index.lastSync = datetime.now(timezone.utc).isoformat()
+                save_index(index, project_path)
+                log(_green(
+                    f"smartctx auto: synced ({len(to_process)} updated, {len(changes['deleted'])} removed)"
+                ))
+
+        index = load_index(project_path)
+
+        if target:
+            targets_list = parse_targets(target)
+        else:
+            detected = detect_target(project_path)
+            targets_list = [detected] if detected else [config.defaultTarget or "claude"]
+
+        results = query_index(index, final_task, top)
+        if not results:
+            log(_dim("smartctx auto: no relevant files found"))
+            sys.exit(0)
+
+        generated = generate_context_files(index, results, final_task, targets_list, project_path)
+        log(_green(f"smartctx auto: wrote {', '.join(g.outputPath for g in generated)}"))
+        sys.exit(0)
+    except Exception as err:
+        # Never block the host AI tool -- fail silently
+        log(_red(f"smartctx auto: {err}"))
+        sys.exit(0)
+
+
+# -- INSTALL (wire smartctx auto into AI tool hooks) ---------------------
+
+@main.command()
+@click.option("--tool", default="claude", help="AI tool to integrate with: claude (default)")
+@click.option("--scope", default="project", type=click.Choice(["project", "user"]),
+              help="Install scope: project or user")
+@click.option("--uninstall", is_flag=True, help="Remove the hook instead of adding it")
+def install(tool: str, scope: str, uninstall: bool):
+    """Install smartctx into an AI tool so context auto-updates on every prompt."""
+    click.echo(_cyan(_bold("\n\U0001f50c smartctx install\n")))
+    tool = tool.lower()
+    if tool != "claude":
+        click.echo(
+            _red(f'\u2717 Tool "{tool}" not supported yet. Only --tool claude works.\n')
+            + _dim("  For Cursor/Codex, run `smartctx query \"...\"` manually (see README).\n")
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    if scope == "user":
+        settings_path = Path.home() / ".claude" / "settings.json"
+    else:
+        settings_path = Path(os.getcwd()) / ".claude" / "settings.json"
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    settings: dict = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            click.echo(_red(f"\u2717 Could not parse {settings_path} -- fix it first.\n"))
+            sys.exit(1)
+
+    settings.setdefault("hooks", {})
+    existing = settings["hooks"].get("UserPromptSubmit", [])
+    without_ours = [
+        h for h in existing
+        if not any(
+            isinstance(x, dict) and isinstance(x.get("command"), str) and "smartctx auto" in x["command"]
+            for x in (h.get("hooks", []) if isinstance(h, dict) else [])
+        )
+    ]
+
+    if uninstall:
+        settings["hooks"]["UserPromptSubmit"] = without_ours
+        if not settings["hooks"]["UserPromptSubmit"]:
+            settings["hooks"].pop("UserPromptSubmit", None)
+        if not settings["hooks"]:
+            settings.pop("hooks", None)
+        settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        click.echo(_green(f"\u2713 Removed smartctx hook from {settings_path}\n"))
+        return
+
+    settings["hooks"]["UserPromptSubmit"] = without_ours + [
+        {"hooks": [{"type": "command", "command": "smartctx auto"}]}
+    ]
+    settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
+    click.echo(_green("\u2713 Installed smartctx UserPromptSubmit hook"))
+    click.echo(_dim(f"  {settings_path}\n"))
+    click.echo(_bold("What happens now:"))
+    click.echo(_dim("  - Every prompt you send in Claude Code triggers `smartctx auto`"))
+    click.echo(_dim("  - It silently (re)builds context and rewrites CLAUDE.md"))
+    click.echo(_dim("  - Claude Code reads the fresh CLAUDE.md on the next turn"))
+    click.echo(_dim("  - To remove: smartctx install --uninstall\n"))
