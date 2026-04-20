@@ -17,3 +17,6 @@ vscode-extension/*.vsix
 
 # Claude Code local overrides
 .claude/settings.local.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
