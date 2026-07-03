@@ -6,9 +6,13 @@ import { FileSummary, loadGlobalConfig } from "./storage.js";
 
 export async function summarizeFile(
   file: ScannedFile,
-  apiKey: string
+  apiKey: string,
+  onError?: (filePath: string, error: Error) => void
 ): Promise<FileSummary> {
-  const client = new Anthropic({ apiKey });
+  // maxRetries: the SDK retries 429/5xx/connection errors with exponential
+  // backoff internally — bump it above the default(2) since init/sync can
+  // run over hundreds of files and transient hiccups shouldn't cost quality.
+  const client = new Anthropic({ apiKey, maxRetries: 4 });
 
   const prompt = `You are analyzing a source code file for a developer tool. 
 Analyze this file and respond ONLY with a JSON object (no markdown, no explanation).
@@ -51,7 +55,9 @@ Respond with this exact JSON structure:
       extension: file.extension,
     };
   } catch (err) {
-    // Fallback: return basic info without AI summary
+    // Fallback: return basic info without AI summary. Surface *why* so
+    // callers (e.g. --verbose) can tell a real failure from a normal file.
+    onError?.(file.path, err as Error);
     return {
       path: file.path,
       summary: `${file.extension} file at ${file.path}`,
@@ -61,31 +67,39 @@ Respond with this exact JSON structure:
       lastModified: file.lastModified,
       size: file.size,
       extension: file.extension,
+      summaryFailed: true,
     };
   }
 }
 
 // ─── Batch Summarizer ─────────────────────────────────────────────────────────
 
+const DEFAULT_CONCURRENCY = 5;
+
 export async function summarizeFiles(
   files: ScannedFile[],
   apiKey: string,
-  onProgress?: (current: number, total: number, filePath: string) => void
+  onProgress?: (current: number, total: number, filePath: string) => void,
+  onError?: (filePath: string, error: Error) => void,
+  concurrency: number = DEFAULT_CONCURRENCY
 ): Promise<FileSummary[]> {
-  const summaries: FileSummary[] = [];
+  const summaries: FileSummary[] = new Array(files.length);
+  let completed = 0;
+  let nextIndex = 0;
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    onProgress?.(i + 1, files.length, file.path);
-
-    const summary = await summarizeFile(file, apiKey);
-    summaries.push(summary);
-
-    // Small delay to avoid rate limiting
-    if (i < files.length - 1) {
-      await new Promise((r) => setTimeout(r, 200));
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = nextIndex++;
+      if (i >= files.length) return;
+      const file = files[i];
+      summaries[i] = await summarizeFile(file, apiKey, onError);
+      completed++;
+      onProgress?.(completed, files.length, file.path);
     }
   }
+
+  const workerCount = Math.max(1, Math.min(concurrency, files.length));
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   return summaries;
 }

@@ -119,7 +119,7 @@ export async function scanProject(
 
 export function getChangedFiles(
   scanned: ScannedFile[],
-  existingIndex: Record<string, { lastModified: number }>
+  existingIndex: Record<string, { lastModified: number; summaryFailed?: boolean }>
 ): { new: ScannedFile[]; changed: ScannedFile[]; deleted: string[] } {
   const newFiles: ScannedFile[] = [];
   const changedFiles: ScannedFile[] = [];
@@ -129,7 +129,9 @@ export function getChangedFiles(
     const existing = existingIndex[file.path];
     if (!existing) {
       newFiles.push(file);
-    } else if (file.lastModified > existing.lastModified) {
+    } else if (file.lastModified > existing.lastModified || existing.summaryFailed) {
+      // Retry files whose last summarization attempt failed, even if the
+      // file itself hasn't changed since then.
       changedFiles.push(file);
     }
   }

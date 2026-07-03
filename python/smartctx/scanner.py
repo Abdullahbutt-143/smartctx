@@ -129,7 +129,11 @@ def get_changed_files(
         existing = existing_index.get(f.path)
         if existing is None:
             new_files.append(f)
-        elif f.lastModified > getattr(existing, "lastModified", 0):
+        elif f.lastModified > getattr(existing, "lastModified", 0) or getattr(
+            existing, "summaryFailed", False
+        ):
+            # Retry files whose last summarization attempt failed, even if
+            # the file itself hasn't changed since then.
             changed_files.append(f)
 
     deleted = [p for p in existing_index if p not in scanned_paths]

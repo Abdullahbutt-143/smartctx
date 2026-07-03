@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import fs from "fs";
+import path from "path";
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
@@ -28,6 +30,12 @@ import {
   loadUserTargets,
 } from "./targets.js";
 
+// Read version from package.json at runtime (dist/index.js -> ../package.json)
+// so the CLI version can never drift from what's actually published.
+const CLI_VERSION: string = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8")
+).version;
+
 const program = new Command();
 
 // ─── CLI Setup ────────────────────────────────────────────────────────────────
@@ -37,7 +45,7 @@ program
   .description(
     "Smart context manager for AI coding assistants — saves tokens, builds local memory"
   )
-  .version("0.3.0");
+  .version(CLI_VERSION);
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 
@@ -96,13 +104,26 @@ program
     console.log(chalk.cyan("\nSummarizing files with Claude Haiku (cheapest model)...\n"));
     const index = createEmptyIndex(projectPath);
 
-    const summaries = await summarizeFiles(files, config.apiKey, (current, total, filePath) => {
-      process.stdout.write(
-        `\r  ${chalk.green(`[${current}/${total}]`)} ${chalk.gray(filePath.slice(0, 50).padEnd(50))}`
-      );
-    });
+    const failed: string[] = [];
+    const summaries = await summarizeFiles(
+      files,
+      config.apiKey,
+      (current, total, filePath) => {
+        process.stdout.write(
+          `\r  ${chalk.green(`[${current}/${total}]`)} ${chalk.gray(filePath.slice(0, 50).padEnd(50))}`
+        );
+      },
+      (filePath, error) => failed.push(`${filePath}: ${error.message}`)
+    );
 
     console.log("\n");
+    if (failed.length > 0) {
+      console.log(
+        chalk.yellow(`⚠ ${failed.length} file(s) fell back to a basic summary after repeated API errors:`)
+      );
+      failed.forEach((f) => console.log(chalk.gray(`  ${f}`)));
+      console.log(chalk.gray("  Run `smartctx sync` later to retry them.\n"));
+    }
 
     for (const summary of summaries) {
       index.files[summary.path] = summary;
@@ -159,12 +180,24 @@ program
 
     if (toProcess.length > 0) {
       console.log(chalk.cyan(`\nSummarizing ${toProcess.length} files...\n`));
-      const summaries = await summarizeFiles(toProcess, config.apiKey, (current, total, filePath) => {
-        process.stdout.write(
-          `\r  ${chalk.green(`[${current}/${total}]`)} ${chalk.gray(filePath.slice(0, 50).padEnd(50))}`
-        );
-      });
+      const failed: string[] = [];
+      const summaries = await summarizeFiles(
+        toProcess,
+        config.apiKey,
+        (current, total, filePath) => {
+          process.stdout.write(
+            `\r  ${chalk.green(`[${current}/${total}]`)} ${chalk.gray(filePath.slice(0, 50).padEnd(50))}`
+          );
+        },
+        (filePath, error) => failed.push(`${filePath}: ${error.message}`)
+      );
       console.log("\n");
+      if (failed.length > 0) {
+        console.log(
+          chalk.yellow(`⚠ ${failed.length} file(s) fell back to a basic summary — will retry on next sync:`)
+        );
+        failed.forEach((f) => console.log(chalk.gray(`  ${f}`)));
+      }
       for (const s of summaries) {
         index.files[s.path] = s;
       }
@@ -446,7 +479,9 @@ program
         log(chalk.cyan("smartctx auto: first run, initializing..."));
         const files = await scanProject(projectPath, config);
         const index = createEmptyIndex(projectPath);
-        const summaries = await summarizeFiles(files, config.apiKey);
+        const summaries = await summarizeFiles(files, config.apiKey, undefined, (filePath, error) =>
+          log(chalk.yellow(`smartctx auto: summarization failed for ${filePath}: ${error.message}`))
+        );
         for (const s of summaries) index.files[s.path] = s;
         index.totalFiles = summaries.length;
         index.lastSync = new Date().toISOString();
@@ -463,7 +498,9 @@ program
           const toProcess = [...changes.new, ...changes.changed];
           for (const d of changes.deleted) delete index.files[d];
           if (toProcess.length > 0) {
-            const summaries = await summarizeFiles(toProcess, config.apiKey);
+            const summaries = await summarizeFiles(toProcess, config.apiKey, undefined, (filePath, error) =>
+              log(chalk.yellow(`smartctx auto: summarization failed for ${filePath}: ${error.message}`))
+            );
             for (const s of summaries) index.files[s.path] = s;
           }
           index.totalFiles = Object.keys(index.files).length;

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Optional
 
 import anthropic
@@ -12,9 +12,16 @@ from smartctx.storage import FileSummary
 
 # ── Summarizer ───────────────────────────────────────────────────────────────
 
+ErrorCallback = Callable[[str, Exception], None]
 
-def summarize_file(file: ScannedFile, api_key: str) -> FileSummary:
-    client = anthropic.Anthropic(api_key=api_key)
+
+def summarize_file(
+    file: ScannedFile, api_key: str, on_error: Optional[ErrorCallback] = None
+) -> FileSummary:
+    # max_retries: the SDK retries 429/5xx/connection errors with exponential
+    # backoff internally — bump it above the default(2) since init/sync can
+    # run over hundreds of files and transient hiccups shouldn't cost quality.
+    client = anthropic.Anthropic(api_key=api_key, max_retries=4)
 
     prompt = f"""You are analyzing a source code file for a developer tool.
 Analyze this file and respond ONLY with a JSON object (no markdown, no explanation).
@@ -54,7 +61,11 @@ Respond with this exact JSON structure:
             size=file.size,
             extension=file.extension,
         )
-    except Exception:
+    except Exception as err:
+        # Fallback: return basic info without AI summary. Surface *why* so
+        # callers (e.g. --verbose) can tell a real failure from a normal file.
+        if on_error:
+            on_error(file.path, err)
         return FileSummary(
             path=file.path,
             summary=f"{file.extension} file at {file.path}",
@@ -64,6 +75,7 @@ Respond with this exact JSON structure:
             lastModified=file.lastModified,
             size=file.size,
             extension=file.extension,
+            summaryFailed=True,
         )
 
 
@@ -71,26 +83,36 @@ Respond with this exact JSON structure:
 
 ProgressCallback = Callable[[int, int, str], None]
 
+DEFAULT_CONCURRENCY = 5
+
 
 def summarize_files(
     files: List[ScannedFile],
     api_key: str,
     on_progress: Optional[ProgressCallback] = None,
+    on_error: Optional[ErrorCallback] = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
 ) -> List[FileSummary]:
-    summaries: List[FileSummary] = []
+    if not files:
+        return []
 
-    for i, file in enumerate(files):
-        if on_progress:
-            on_progress(i + 1, len(files), file.path)
+    summaries: List[Optional[FileSummary]] = [None] * len(files)
+    completed = 0
 
-        summary = summarize_file(file, api_key)
-        summaries.append(summary)
+    worker_count = max(1, min(concurrency, len(files)))
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        futures = {
+            pool.submit(summarize_file, file, api_key, on_error): i
+            for i, file in enumerate(files)
+        }
+        for future in as_completed(futures):
+            i = futures[future]
+            summaries[i] = future.result()
+            completed += 1
+            if on_progress:
+                on_progress(completed, len(files), files[i].path)
 
-        # Small delay to avoid rate limiting
-        if i < len(files) - 1:
-            time.sleep(0.2)
-
-    return summaries
+    return summaries  # type: ignore[return-value]
 
 
 # ── Estimate Cost ────────────────────────────────────────────────────────────

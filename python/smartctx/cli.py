@@ -127,8 +127,18 @@ def init(api_key: str | None, dry_run: bool):
         label = file_path[:50].ljust(50)
         click.echo(f"\r  {_green(f'[{current}/{total}]')} {_dim(label)}", nl=False)
 
-    summaries = summarize_files(files, config.apiKey, on_progress)
+    failed: list[str] = []
+
+    def on_error(file_path: str, error: Exception):
+        failed.append(f"{file_path}: {error}")
+
+    summaries = summarize_files(files, config.apiKey, on_progress, on_error)
     click.echo("\n")
+    if failed:
+        click.echo(_yellow(f"⚠ {len(failed)} file(s) fell back to a basic summary after repeated API errors:"))
+        for f in failed:
+            click.echo(_dim(f"  {f}"))
+        click.echo(_dim("  Run `smartctx sync` later to retry them.\n"))
 
     for s in summaries:
         index.files[s.path] = s
@@ -186,8 +196,17 @@ def sync():
             label = file_path[:50].ljust(50)
             click.echo(f"\r  {_green(f'[{current}/{total}]')} {_dim(label)}", nl=False)
 
-        summaries = summarize_files(to_process, config.apiKey, on_progress)
+        failed: list[str] = []
+
+        def on_error(file_path: str, error: Exception):
+            failed.append(f"{file_path}: {error}")
+
+        summaries = summarize_files(to_process, config.apiKey, on_progress, on_error)
         click.echo("\n")
+        if failed:
+            click.echo(_yellow(f"⚠ {len(failed)} file(s) fell back to a basic summary — will retry on next sync:"))
+            for f in failed:
+                click.echo(_dim(f"  {f}"))
         for s in summaries:
             index.files[s.path] = s
 
@@ -441,7 +460,12 @@ def auto(task: str | None, verbose: bool, top: int, target: str | None, max_stal
             log(_cyan("smartctx auto: first run, initializing..."))
             files = scan_project(project_path, config)
             index = create_empty_index(project_path)
-            summaries = summarize_files(files, config.apiKey)
+            summaries = summarize_files(
+                files,
+                config.apiKey,
+                None,
+                lambda fp, err: log(_yellow(f"smartctx auto: summarization failed for {fp}: {err}")),
+            )
             for s in summaries:
                 index.files[s.path] = s
             index.totalFiles = len(summaries)
@@ -463,7 +487,12 @@ def auto(task: str | None, verbose: bool, top: int, target: str | None, max_stal
                 for d in changes["deleted"]:
                     index.files.pop(d, None)
                 if to_process:
-                    summaries = summarize_files(to_process, config.apiKey)
+                    summaries = summarize_files(
+                        to_process,
+                        config.apiKey,
+                        None,
+                        lambda fp, err: log(_yellow(f"smartctx auto: summarization failed for {fp}: {err}")),
+                    )
                     for s in summaries:
                         index.files[s.path] = s
                 index.totalFiles = len(index.files)

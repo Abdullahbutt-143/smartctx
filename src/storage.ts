@@ -19,6 +19,10 @@ export interface FileSummary {
   lastModified: number;
   size: number;
   extension: string;
+  // true when the AI summarization call failed and this is a generic
+  // fallback — lets `sync` retry it next time even if the file itself
+  // hasn't changed.
+  summaryFailed?: boolean;
 }
 
 export interface ProjectIndex {

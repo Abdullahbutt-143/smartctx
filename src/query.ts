@@ -31,6 +31,29 @@ export function queryIndex(
 
 // ─── Scoring ──────────────────────────────────────────────────────────────────
 
+// Below this length, substring matching produces too many false positives
+// (e.g. "log" matching "login", "catalog", "dialog", "logger") — short
+// tokens must match a whole word instead.
+const MIN_LENGTH_FOR_SUBSTRING_MATCH = 5;
+
+// Returns 1 for an exact match, a fraction for a substring match, or 0 for
+// no match — so partial matches never outscore an exact one.
+function matchStrength(queryToken: string, candidate: string): number {
+  if (queryToken === candidate) return 1;
+  if (queryToken.length < MIN_LENGTH_FOR_SUBSTRING_MATCH) return 0;
+  if (candidate.includes(queryToken) || queryToken.includes(candidate)) return 0.6;
+  return 0;
+}
+
+function bestMatch(queryToken: string, candidates: string[]): number {
+  let best = 0;
+  for (const c of candidates) {
+    const strength = matchStrength(queryToken, c);
+    if (strength > best) best = strength;
+  }
+  return best;
+}
+
 function scoreFile(
   file: FileSummary,
   queryTokens: string[]
@@ -44,35 +67,21 @@ function scoreFile(
   const depTokens = file.dependencies.map((d) => d.toLowerCase());
   const pathTokens = tokenize(file.path);
 
+  const weights: Array<[string, string[], number]> = [
+    ["path", pathTokens, 3],       // file path match — high weight
+    ["tag", tagTokens, 2.5],       // tag match — high weight (curated keywords)
+    ["summary", summaryTokens, 2], // summary match — medium weight
+    ["export", exportTokens, 1.5], // export match — medium weight
+    ["dep", depTokens, 1],         // dependency match — lower weight
+  ];
+
   for (const qt of queryTokens) {
-    // File path match — high weight (file name is very relevant)
-    if (pathTokens.some((pt) => pt.includes(qt) || qt.includes(pt))) {
-      score += 3;
-      matchedOn.push(`path:${qt}`);
-    }
-
-    // Tag match — high weight (tags are curated keywords)
-    if (tagTokens.some((tag) => tag.includes(qt) || qt.includes(tag))) {
-      score += 2.5;
-      matchedOn.push(`tag:${qt}`);
-    }
-
-    // Summary match — medium weight
-    if (summaryTokens.some((st) => st.includes(qt) || qt.includes(st))) {
-      score += 2;
-      matchedOn.push(`summary:${qt}`);
-    }
-
-    // Export match — medium weight
-    if (exportTokens.some((et) => et.includes(qt) || qt.includes(et))) {
-      score += 1.5;
-      matchedOn.push(`export:${qt}`);
-    }
-
-    // Dependency match — lower weight
-    if (depTokens.some((dt) => dt.includes(qt) || qt.includes(dt))) {
-      score += 1;
-      matchedOn.push(`dep:${qt}`);
+    for (const [label, candidates, weight] of weights) {
+      const strength = bestMatch(qt, candidates);
+      if (strength > 0) {
+        score += weight * strength;
+        matchedOn.push(`${label}:${qt}`);
+      }
     }
   }
 

@@ -46,6 +46,27 @@ def _tokenize(text: str) -> List[str]:
     return [t for t in tokens if len(t) > 2 and t not in STOP_WORDS]
 
 
+# Below this length, substring matching produces too many false positives
+# (e.g. "log" matching "login", "catalog", "dialog", "logger") — short
+# tokens must match a whole word instead.
+MIN_LENGTH_FOR_SUBSTRING_MATCH = 5
+
+
+def _match_strength(query_token: str, candidate: str) -> float:
+    """1 for an exact match, a fraction for a substring match, 0 for no match."""
+    if query_token == candidate:
+        return 1.0
+    if len(query_token) < MIN_LENGTH_FOR_SUBSTRING_MATCH:
+        return 0.0
+    if query_token in candidate or candidate in query_token:
+        return 0.6
+    return 0.0
+
+
+def _best_match(query_token: str, candidates: List[str]) -> float:
+    return max((_match_strength(query_token, c) for c in candidates), default=0.0)
+
+
 def _score_file(file: FileSummary, query_tokens: List[str]) -> tuple:
     score = 0.0
     matched_on: List[str] = []
@@ -56,30 +77,19 @@ def _score_file(file: FileSummary, query_tokens: List[str]) -> tuple:
     dep_tokens = [d.lower() for d in file.dependencies]
     path_tokens = _tokenize(file.path)
 
+    weighted_fields = [
+        ("path", path_tokens, 3),        # file path match — high weight
+        ("tag", tag_tokens, 2.5),        # tag match — high weight (curated keywords)
+        ("summary", summary_tokens, 2),  # summary match — medium weight
+        ("export", export_tokens, 1.5),  # export match — medium weight
+        ("dep", dep_tokens, 1),          # dependency match — lower weight
+    ]
+
     for qt in query_tokens:
-        # File path match — high weight
-        if any(qt in pt or pt in qt for pt in path_tokens):
-            score += 3
-            matched_on.append(f"path:{qt}")
-
-        # Tag match — high weight
-        if any(qt in tag or tag in qt for tag in tag_tokens):
-            score += 2.5
-            matched_on.append(f"tag:{qt}")
-
-        # Summary match — medium weight
-        if any(qt in st or st in qt for st in summary_tokens):
-            score += 2
-            matched_on.append(f"summary:{qt}")
-
-        # Export match — medium weight
-        if any(qt in et or et in qt for et in export_tokens):
-            score += 1.5
-            matched_on.append(f"export:{qt}")
-
-        # Dependency match — lower weight
-        if any(qt in dt or dt in qt for dt in dep_tokens):
-            score += 1
-            matched_on.append(f"dep:{qt}")
+        for label, candidates, weight in weighted_fields:
+            strength = _best_match(qt, candidates)
+            if strength > 0:
+                score += weight * strength
+                matched_on.append(f"{label}:{qt}")
 
     return score, list(set(matched_on))

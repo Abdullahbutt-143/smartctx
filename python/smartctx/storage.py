@@ -25,6 +25,10 @@ class FileSummary:
     lastModified: float
     size: int
     extension: str
+    # True when the AI summarization call failed and this is a generic
+    # fallback — lets `sync` retry it next time even if the file itself
+    # hasn't changed.
+    summaryFailed: bool = False
 
 
 @dataclass
@@ -115,6 +119,7 @@ def _file_summary_from_dict(d: dict) -> FileSummary:
         lastModified=d["lastModified"],
         size=d["size"],
         extension=d["extension"],
+        summaryFailed=d.get("summaryFailed", False),
     )
 
 
